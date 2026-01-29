@@ -34,6 +34,7 @@ import (
 	e2eskipper "k8s.io/kubernetes/test/e2e/framework/skipper"
 	"k8s.io/kubernetes/test/e2e/network/common"
 	imageutils "k8s.io/kubernetes/test/utils/image"
+	utilnet "k8s.io/utils/net"
 	admissionapi "k8s.io/pod-security-admission/api"
 
 	"github.com/onsi/ginkgo/v2"
@@ -41,6 +42,18 @@ import (
 
 const dnsTestPodHostName = "dns-querier-1"
 const dnsTestServiceName = "dns-test-service"
+
+// getClusterPrimaryIPFamily detects whether the cluster is using IPv6 as its primary IP family
+// by checking the kubernetes.default service ClusterIP. This is more reliable than
+// framework.TestContext.ClusterIsIPv6() which returns false for dualstack v6-primary clusters.
+func getClusterPrimaryIPFamily(ctx context.Context, f *framework.Framework) bool {
+	kubeService, err := f.ClientSet.CoreV1().Services("default").Get(ctx, "kubernetes", metav1.GetOptions{})
+	framework.ExpectNoError(err, "failed to get kubernetes.default service")
+	isIPv6 := utilnet.IsIPv6String(kubeService.Spec.ClusterIP)
+	framework.Logf("DEBUG-DNS: Detected cluster primary IP family: IPv6=%v (kubernetes.default ClusterIP=%s)",
+		isIPv6, kubeService.Spec.ClusterIP)
+	return isIPv6
+}
 
 var _ = common.SIGDescribe("DNS", func() {
 	f := framework.NewDefaultFramework("dns")
@@ -58,13 +71,16 @@ var _ = common.SIGDescribe("DNS", func() {
 		namesToResolve := []string{
 			fmt.Sprintf("kubernetes.default.svc.%s", framework.TestContext.ClusterDNSDomain),
 		}
+		// Detect actual cluster IP family instead of using ClusterIsIPv6() which returns false
+		// for dualstack v6-primary clusters.
+		isIPv6 := getClusterPrimaryIPFamily(ctx, f)
 		// TODO: Validate both IPv4 and IPv6 families for dual-stack
 		// TODO: We should change this whole test mechanism to run the same probes
 		// against a known list of different base images.  Agnhost happens to be alpine
 		// (MUSL libc) for the moment, and jessie is (an old version of) libc.
-		agnhostProbeCmd, agnhostFileNames := createProbeCommand(namesToResolve, nil, "", "agnhost", f.Namespace.Name, framework.TestContext.ClusterDNSDomain, framework.TestContext.ClusterIsIPv6())
+		agnhostProbeCmd, agnhostFileNames := createProbeCommand(namesToResolve, nil, "", "agnhost", f.Namespace.Name, framework.TestContext.ClusterDNSDomain, isIPv6)
 		agnhostProber := dnsQuerier{name: "agnhost", image: imageutils.Agnhost, cmd: agnhostProbeCmd}
-		jessieProbeCmd, jessieFileNames := createProbeCommand(namesToResolve, nil, "", "jessie", f.Namespace.Name, framework.TestContext.ClusterDNSDomain, framework.TestContext.ClusterIsIPv6())
+		jessieProbeCmd, jessieFileNames := createProbeCommand(namesToResolve, nil, "", "jessie", f.Namespace.Name, framework.TestContext.ClusterDNSDomain, isIPv6)
 		jessieProber := dnsQuerier{name: "jessie", image: imageutils.JessieDnsutils, cmd: jessieProbeCmd}
 		ginkgo.By("Running these commands on agnhost: " + agnhostProbeCmd + "\n")
 		ginkgo.By("Running these commands on jessie: " + jessieProbeCmd + "\n")
@@ -238,10 +254,13 @@ var _ = common.SIGDescribe("DNS", func() {
 			fmt.Sprintf("_http._tcp.%s.%s.svc", regularService.Name, f.Namespace.Name),
 		}
 
+		// Detect actual cluster IP family instead of using ClusterIsIPv6() which returns false
+		// for dualstack v6-primary clusters.
+		isIPv6 := getClusterPrimaryIPFamily(ctx, f)
 		// TODO: Validate both IPv4 and IPv6 families for dual-stack
-		agnhostProbeCmd, agnhostFileNames := createProbeCommand(namesToResolve, nil, regularService.Spec.ClusterIP, "agnhost", f.Namespace.Name, framework.TestContext.ClusterDNSDomain, framework.TestContext.ClusterIsIPv6())
+		agnhostProbeCmd, agnhostFileNames := createProbeCommand(namesToResolve, nil, regularService.Spec.ClusterIP, "agnhost", f.Namespace.Name, framework.TestContext.ClusterDNSDomain, isIPv6)
 		agnhostProber := dnsQuerier{name: "agnhost", image: imageutils.Agnhost, cmd: agnhostProbeCmd}
-		jessieProbeCmd, jessieFileNames := createProbeCommand(namesToResolve, nil, regularService.Spec.ClusterIP, "jessie", f.Namespace.Name, framework.TestContext.ClusterDNSDomain, framework.TestContext.ClusterIsIPv6())
+		jessieProbeCmd, jessieFileNames := createProbeCommand(namesToResolve, nil, regularService.Spec.ClusterIP, "jessie", f.Namespace.Name, framework.TestContext.ClusterDNSDomain, isIPv6)
 		jessieProber := dnsQuerier{name: "jessie", image: imageutils.JessieDnsutils, cmd: jessieProbeCmd}
 		ginkgo.By("Running these commands on agnhost: " + agnhostProbeCmd + "\n")
 		ginkgo.By("Running these commands on jessie: " + jessieProbeCmd + "\n")
@@ -635,10 +654,13 @@ var _ = common.SIGDescribe("DNS", func() {
 		}
 		hostFQDN := fmt.Sprintf("%s.%s.%s.svc.%s", dnsTestPodHostName, dnsTestServiceName, f.Namespace.Name, framework.TestContext.ClusterDNSDomain)
 		hostEntries := []string{hostFQDN, dnsTestPodHostName}
+		// Detect actual cluster IP family instead of using ClusterIsIPv6() which returns false
+		// for dualstack v6-primary clusters.
+		isIPv6 := getClusterPrimaryIPFamily(ctx, f)
 		// TODO: Validate both IPv4 and IPv6 families for dual-stack
-		agnhostProbeCmd, agnhostFileNames := createProbeCommand(namesToResolve, hostEntries, "", "agnhost", f.Namespace.Name, framework.TestContext.ClusterDNSDomain, framework.TestContext.ClusterIsIPv6())
+		agnhostProbeCmd, agnhostFileNames := createProbeCommand(namesToResolve, hostEntries, "", "agnhost", f.Namespace.Name, framework.TestContext.ClusterDNSDomain, isIPv6)
 		agnhostProber := dnsQuerier{name: "agnhost", image: imageutils.Agnhost, cmd: agnhostProbeCmd}
-		jessieProbeCmd, jessieFileNames := createProbeCommand(namesToResolve, hostEntries, "", "jessie", f.Namespace.Name, framework.TestContext.ClusterDNSDomain, framework.TestContext.ClusterIsIPv6())
+		jessieProbeCmd, jessieFileNames := createProbeCommand(namesToResolve, hostEntries, "", "jessie", f.Namespace.Name, framework.TestContext.ClusterDNSDomain, isIPv6)
 		jessieProber := dnsQuerier{name: "jessie", image: imageutils.JessieDnsutils, cmd: jessieProbeCmd}
 		ginkgo.By("Running these commands on agnhost: " + agnhostProbeCmd + "\n")
 		ginkgo.By("Running these commands on jessie: " + jessieProbeCmd + "\n")
